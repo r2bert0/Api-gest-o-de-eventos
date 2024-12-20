@@ -1,0 +1,168 @@
+from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime
+
+
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///eventos.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db = SQLAlchemy(app)
+
+
+class Usuario(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(80), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    senha = db.Column(db.String(200), nullable=False)
+
+class Evento(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(120), nullable=False)
+    local = db.Column(db.String(120), nullable=False)
+    data_hora = db.Column(db.DateTime, nullable=False)
+    tipo = db.Column(db.String(50), nullable=False)
+    vagas_disponiveis = db.Column(db.Integer, nullable=False)
+    descricao = db.Column(db.Text, nullable=True)
+
+class Inscricao(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    usuario_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=False)
+    evento_id = db.Column(db.Integer, db.ForeignKey('evento.id'), nullable=False)
+    data_inscricao = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+db.create_all()
+
+
+
+
+@app.route('/usuarios', methods=['POST'])
+def criar_usuario():
+    dados = request.get_json()
+    novo_usuario = Usuario(nome=dados['nome'], email=dados['email'], senha=dados['senha'])
+    db.session.add(novo_usuario)
+    db.session.commit()
+    return jsonify({'mensagem': 'Usuário criado com sucesso!'}), 201
+
+@app.route('/usuarios/<int:id>', methods=['GET'])
+def obter_usuario(id):
+    usuario = Usuario.query.get_or_404(id)
+    return jsonify({'id': usuario.id, 'nome': usuario.nome, 'email': usuario.email})
+
+@app.route('/usuarios/<int:id>', methods=['PUT'])
+def atualizar_usuario(id):
+    dados = request.get_json()
+    usuario = Usuario.query.get_or_404(id)
+    usuario.nome = dados.get('nome', usuario.nome)
+    usuario.email = dados.get('email', usuario.email)
+    usuario.senha = dados.get('senha', usuario.senha)
+    db.session.commit()
+    return jsonify({'mensagem': 'Usuário atualizado com sucesso!'})
+
+@app.route('/usuarios/<int:id>', methods=['DELETE'])
+def deletar_usuario(id):
+    usuario = Usuario.query.get_or_404(id)
+    db.session.delete(usuario)
+    db.session.commit()
+    return jsonify({'mensagem': 'Usuário deletado com sucesso!'})
+
+
+@app.route('/eventos', methods=['POST'])
+def criar_evento():
+    dados = request.get_json()
+    novo_evento = Evento(
+        nome=dados['nome'],
+        local=dados['local'],
+        data_hora=datetime.strptime(dados['data_hora'], '%Y-%m-%d %H:%M:%S'),
+        tipo=dados['tipo'],
+        vagas_disponiveis=dados['vagas_disponiveis'],
+        descricao=dados.get('descricao')
+    )
+    db.session.add(novo_evento)
+    db.session.commit()
+    return jsonify({'mensagem': 'Evento criado com sucesso!'}), 201
+
+@app.route('/eventos', methods=['GET'])
+def listar_eventos():
+    eventos = Evento.query.all()
+    eventos_json = [
+        {
+            'id': evento.id,
+            'nome': evento.nome,
+            'local': evento.local,
+            'data_hora': evento.data_hora.strftime('%Y-%m-%d %H:%M:%S'),
+            'tipo': evento.tipo,
+            'vagas_disponiveis': evento.vagas_disponiveis,
+            'descricao': evento.descricao
+        } for evento in eventos
+    ]
+    return jsonify(eventos_json)
+
+@app.route('/eventos/<int:id>', methods=['GET'])
+def obter_evento(id):
+    evento = Evento.query.get_or_404(id)
+    return jsonify({
+        'id': evento.id,
+        'nome': evento.nome,
+        'local': evento.local,
+        'data_hora': evento.data_hora.strftime('%Y-%m-%d %H:%M:%S'),
+        'tipo': evento.tipo,
+        'vagas_disponiveis': evento.vagas_disponiveis,
+        'descricao': evento.descricao
+    })
+
+@app.route('/eventos/<int:id>', methods=['PUT'])
+def atualizar_evento(id):
+    dados = request.get_json()
+    evento = Evento.query.get_or_404(id)
+    evento.nome = dados.get('nome', evento.nome)
+    evento.local = dados.get('local', evento.local)
+    evento.data_hora = datetime.strptime(dados['data_hora'], '%Y-%m-%d %H:%M:%S') if 'data_hora' in dados else evento.data_hora
+    evento.tipo = dados.get('tipo', evento.tipo)
+    evento.vagas_disponiveis = dados.get('vagas_disponiveis', evento.vagas_disponiveis)
+    evento.descricao = dados.get('descricao', evento.descricao)
+    db.session.commit()
+    return jsonify({'mensagem': 'Evento atualizado com sucesso!'})
+
+@app.route('/eventos/<int:id>', methods=['DELETE'])
+def deletar_evento(id):
+    evento = Evento.query.get_or_404(id)
+    db.session.delete(evento)
+    db.session.commit()
+    return jsonify({'mensagem': 'Evento deletado com sucesso!'})
+
+
+@app.route('/inscricoes', methods=['POST'])
+def criar_inscricao():
+    dados = request.get_json()
+    usuario_id = dados['usuario_id']
+    evento_id = dados['evento_id']
+
+    
+    inscricao_existente = Inscricao.query.filter_by(usuario_id=usuario_id, evento_id=evento_id).first()
+    if inscricao_existente:
+        return jsonify({'erro': 'Usuário já está inscrito neste evento!'}), 400
+
+    
+    evento = Evento.query.get_or_404(evento_id)
+    if evento.vagas_disponiveis <= 0:
+        return jsonify({'erro': 'Não há vagas disponíveis para este evento!'}), 400
+
+    nova_inscricao = Inscricao(usuario_id=usuario_id, evento_id=evento_id)
+    evento.vagas_disponiveis -= 1
+    db.session.add(nova_inscricao)
+    db.session.commit()
+    return jsonify({'mensagem': 'Inscrição realizada com sucesso!'}), 201
+
+@app.route('/inscricoes/<int:id>', methods=['DELETE'])
+def deletar_inscricao(id):
+    inscricao = Inscricao.query.get_or_404(id)
+    evento = Evento.query.get(inscricao.evento_id)
+    evento.vagas_disponiveis += 1
+    db.session.delete(inscricao)
+    db.session.commit()
+    return jsonify({'mensagem': 'Inscrição cancelada com sucesso!'})
+
+if __name__ == '__main__':
+    app.run(debug=True)
